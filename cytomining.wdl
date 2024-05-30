@@ -129,6 +129,8 @@ task profiling {
     apt -y remove sqlite3
     hash -r
 
+    cd "$pycytominer_dir"
+    pip install --force-reinstall .
 
     cd "$initial_dir"
     echo "===========END DOCKER SQLITE MODIFICATION END=============="
