@@ -1,4 +1,3 @@
-
 version 1.0
 
 import "../../utils/cellprofiler_distributed_utils.wdl" as util
@@ -8,7 +7,6 @@ import "../../utils/cellprofiler_distributed_utils.wdl" as util
 ## LICENSING :
 ## This script is released under the WDL source code license (BSD-3)
 ## (see LICENSE in https://github.com/openwdl/wdl).
-
 
 task profiling {
   # A file that pipelines typically implicitly assume they have access to.
@@ -84,15 +82,17 @@ task profiling {
     # display for log
     echo " "
     echo "===================================="
-    echo "= Running cytominer-databse ingest ="
+    echo "= Running cytominer-database ingest ="
     echo "===================================="
     start=`date +%s`
     echo $start
+
+    # run the very long SQLite database ingestion code
     echo "cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini"
-
-    #Modification Begins----------------------------------------------
+    
+    # Count columns
     column_count=$(head -n 1 /cromwell_root/data/*.csv | sed 's/[^,]//g' | wc -c)
-
+    
     if [[ $column_count -le 2000 ]]; then
       cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini
       sqlite3 ~{plate_id}.sqlite < indices.sql
@@ -216,6 +216,7 @@ workflow cytomining {
       gsurls=[output_directory_gsurl],
   }
 
+  # run the compute only if output bucket is writable
   Boolean is_bucket_writable = permission_check.is_bucket_writable
   if (is_bucket_writable) {
 
@@ -228,7 +229,6 @@ workflow cytomining {
     }
 
   }
-
 
   output {
     File monitoring_log = select_first([profiling.monitoring_log, permission_check.log])
