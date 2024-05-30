@@ -1,5 +1,10 @@
 version: 1.2
 workflows:
-  - name: "SqliteMaxColIncrease"
-    subclass: WDL
-    primaryDescriptorPath: /cytomining.wdl
+   - name: "NewCytominer"
+     subclass: WDL
+     primaryDescriptorPath: /cytomining.wdl
+     filters:  # Only develop or master branches and localAligner/** tags
+         branches:
+             - main
+         tags:
+             - /.*/
