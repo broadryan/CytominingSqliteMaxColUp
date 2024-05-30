@@ -92,6 +92,9 @@ task profiling {
 
 
     #Edit starts here-------------------------------
+    initial_dir=$(pwd)
+    echo "Current directory is: $initial_dir"
+
     echo "===========BEGIN DOCKER SQLITE MODIFICATION BEGIN=============="
     #cd /workspace/software/pycytominer
     #git clone https://github.com/sqlite/sqlite.git
@@ -127,7 +130,7 @@ task profiling {
     hash -r
 
 
-
+    cd "$initial_dir"
     echo "===========END DOCKER SQLITE MODIFICATION END=============="
     #Edit ends here-----------------------------------
 
