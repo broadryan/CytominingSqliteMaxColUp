@@ -1,27 +1,47 @@
+
 version 1.0
 
-import "utils/cellprofiler_distributed_utils.wdl" as util
+import "../../utils/cellprofiler_distributed_utils.wdl" as util
 
 ## Copyright Broad Institute, 2021
 ##
 ## LICENSING :
 ## This script is released under the WDL source code license (BSD-3)
 ## (see LICENSE in https://github.com/openwdl/wdl).
+
+
 task profiling {
+  # A file that pipelines typically implicitly assume they have access to.
+
   input {
+    # Input files
     String cellprofiler_analysis_directory_gsurl
     String plate_id
+
+    # Pycytominer aggregation step
     String aggregation_operation = "mean"
+
+    # Pycytominer annotation step
     File plate_map_file
     String? annotate_join_on = "['Metadata_well_position', 'Metadata_Well']"
+
+    # Pycytominer normalize step
     String? normalize_method = "mad_robustize"
     Float? mad_robustize_epsilon = 0.0
+
+    # Desired location of the outputs
     String output_directory_gsurl
+
+    # Hardware-related inputs
     Int? hardware_memory_GB = 30
     Int? hardware_preemptible_tries = 2
   }
+
+  # Ensure no trailing slashes
   String cellprofiler_analysis_directory = sub(cellprofiler_analysis_directory_gsurl, "/+$", "")
   String output_directory = sub(output_directory_gsurl, "/+$", "")
+
+  # Output filenames:
   String agg_filename = plate_id + "_aggregated_" + aggregation_operation + ".csv"
   String aug_filename = plate_id + "_annotated_" + aggregation_operation + ".csv"
   String norm_filename = plate_id + "_normalized_" + aggregation_operation + ".csv"
@@ -29,25 +49,39 @@ task profiling {
   command <<<
 
     set -e
+
+    # run monitoring script
     monitor_script.sh > monitoring.log &
+
+    # display for log
     echo "Localizing data from ~{cellprofiler_analysis_directory}"
     start=`date +%s`
     echo $start
+
+    # localize the data
     mkdir -p /cromwell_root/data
     gsutil -mq rsync -r -x ".*\.png$" ~{cellprofiler_analysis_directory} /cromwell_root/data
     wget -O ingest_config.ini https://raw.githubusercontent.com/broadinstitute/cytominer_scripts/master/ingest_config.ini
     wget -O indices.sql https://raw.githubusercontent.com/broadinstitute/cytominer_scripts/master/indices.sql
+
+    # display for log
     end=`date +%s`
     echo $end
     runtime=$((end-start))
     echo "Total runtime for file localization:"
     echo $runtime
+
+    # display for log
     echo " "
     echo "ls -lh /cromwell_root/data"
     ls -lh /cromwell_root/data
+
+    # display for log
     echo " "
     echo "ls -lh ."
     ls -lh .
+
+    # display for log
     echo " "
     echo "===================================="
     echo "= Running cytominer-databse ingest ="
@@ -56,92 +90,35 @@ task profiling {
     echo $start
     echo "cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini"
 
+    #Modification Begins----------------------------------------------
+    column_count=$(head -n 1 /cromwell_root/data/*.csv | sed 's/[^,]//g' | wc -c)
 
+    if [[ $column_count -le 2000 ]]; then
+      cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini
+      sqlite3 ~{plate_id}.sqlite < indices.sql
 
-    #Edit starts here-------------------------------
-
-    echo "which sqlite3"
-    which sqlite3
-
-    echo "whereis sqlite3"
-    whereis sqlite3
-
-    echo "grep -ri SQLITE_MAX_COLUMN"
-    grep -ri SQLITE_MAX_COLUMN
-
-
-
-    initial_dir=$(pwd)
-    echo "Current directory is: $initial_dir"
-    ls -lh .
-
-    # Search for all directories named 'pycytominer' and echo them
-    all_pycytominer_dirs=$(find / -type d -name 'pycytominer' 2>/dev/null)
-    echo "All found pycytominer directories:"
-    for dir in $all_pycytominer_dirs; 
-    do 
-      echo "$dir"; 
-    done
-
-    all_sqlite_dirs=$(find / -type d -name 'sqlite' 2>/dev/null)
-    echo "All found sqlite directories:"
-    for dir in $all_sqlite_dirs; 
-    do 
-      echo "$dir"; 
-    done
-
-    echo "===========BEGIN DOCKER SQLITE MODIFICATION BEGIN=============="
-    pycytominer_dir=$(find / -type d -name 'pycytominer' 2>/dev/null | head -n 1)
-    if [ -n "$pycytominer_dir" ]; then
-        echo "Found 'pycytominer' directory at: $pycytominer_dir"
-        cd "$pycytominer_dir"
+      # Copying sqlite
+      echo "Copying sqlite file to ~{output_directory}"
+      gsutil cp ~{plate_id}.sqlite ~{output_directory}/
     else
-        echo "'pycytominer' directory not found. Continuing in the current directory."
+      # Split data into two sets of columns
+      head -n 1 /cromwell_root/data/*.csv > header.csv
+      cut -d, -f1-2000 /cromwell_root/data/*.csv > data_part1.csv
+      cut -d, -f2001- /cromwell_root/data/*.csv > data_part2.csv
+      
+      cat header.csv data_part1.csv > /cromwell_root/data/data_part1_full.csv
+      cat header.csv data_part2.csv > /cromwell_root/data/data_part2_full.csv
+      
+      cytominer-database ingest /cromwell_root/data/data_part1_full.csv sqlite:///~{plate_id}_part1.sqlite -c ingest_config.ini
+      cytominer-database ingest /cromwell_root/data/data_part2_full.csv sqlite:///~{plate_id}_part2.sqlite -c ingest_config.ini
+      sqlite3 ~{plate_id}_part1.sqlite < indices.sql
+      sqlite3 ~{plate_id}_part2.sqlite < indices.sql
+
+      # Copying sqlite files
+      echo "Copying sqlite files to ~{output_directory}"
+      gsutil cp ~{plate_id}_part1.sqlite ~{output_directory}/
+      gsutil cp ~{plate_id}_part2.sqlite ~{output_directory}/
     fi
-
-
-    #cd /workspace/software/pycytominer
-    git clone https://github.com/sqlite/sqlite.git
-    sed -i "s/SQLITE_MAX_COLUMN 2000/SQLITE_MAX_COLUMN 5000/" sqlite/src/sqliteLimit.h
-    mkdir bld
-    cd bld
-    ../sqlite/configure SQLITE_MAX_COLUMN=5000
-    make install
-    apt -y remove sqlite3
-    hash -r
-
-    echo "grep -ri SQLITE_MAX_COLUMN"
-    grep -ri SQLITE_MAX_COLUMN
-
-    cd "$initial_dir"
-
-    echo "which sqlite3"
-    which sqlite3
-
-    echo "whereis sqlite3"
-    whereis sqlite3
-
-    echo "grep -ri SQLITE_MAX_COLUMN"
-    grep -ri SQLITE_MAX_COLUMN
-
-    echo "===========END DOCKER SQLITE MODIFICATION END=============="
-
-
-    #Edit ends here-----------------------------------
-
-    # run the very long SQLite database ingestion code
-    cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini
-
-    echo "=========cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini command ran==============="
-
-    sqlite3 ~{plate_id}.sqlite < indices.sql
-    echo "=========sqlite3 ~{plate_id}.sqlite < indices.sql command ran==============="
-
-
-    # Copying sqlite
-    echo "Copying sqlite file to ~{output_directory}"
-    gsutil cp ~{plate_id}.sqlite ~{output_directory}/
-    echo "=========cgsutil cp ~{plate_id}.sqlite ~{output_directory}/ command ran==============="
 
     # display for log
     end=`date +%s`
@@ -239,7 +216,6 @@ workflow cytomining {
       gsurls=[output_directory_gsurl],
   }
 
-  # run the compute only if output bucket is writable
   Boolean is_bucket_writable = permission_check.is_bucket_writable
   if (is_bucket_writable) {
 
@@ -252,6 +228,7 @@ workflow cytomining {
     }
 
   }
+
 
   output {
     File monitoring_log = select_first([profiling.monitoring_log, permission_check.log])
