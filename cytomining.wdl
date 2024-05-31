@@ -87,34 +87,37 @@ task profiling {
     find /cromwell_root/data -type f -name "*.csv" | while read -r file; do
       column_count=$(head -1 "$file" | sed 's/[^,]//g' | wc -c)
       if [ "$column_count" -gt 1999 ]; then
-        echo "Processing $file with $column_count columns"
-        awk -F, -v OFS=, '{
+        filename=$(basename "$file" .csv)
+        delimiter="|${filename}_"
+        echo "Processing $file with $column_count columns using delimiter $delimiter"
+        awk -F, -v OFS=, -v delim="$delimiter" '{
           if (NR == 1) {
-            for (i=1; i<=1999; i++) {
+            for (i=1; i<=1998; i++) {
               header[i] = $i
             }
-            header[2000] = ""
-            for (i=2000; i<=NF; i++) {
-              header[2000] = header[2000] (header[2000] ? "|" : "") $i
+            header[1999] = ""
+            for (i=1999; i<=NF; i++) {
+              header[1999] = header[1999] (header[1999] ? delim : "") $i
             }
-            for (i=1; i<=2000; i++) {
-              printf header[i] (i==2000 ? "\n" : ",")
+            for (i=1; i<=1999; i++) {
+              printf header[i] (i==1999 ? "\n" : ",")
             }
           } else {
-            for (i=1; i<=1999; i++) {
+            for (i=1; i<=1998; i++) {
               row[i] = $i
             }
-            row[2000] = ""
-            for (i=2000; i<=NF; i++) {
-              row[2000] = row[2000] (row[2000] ? "|" : "") $i
+            row[1999] = ""
+            for (i=1999; i<=NF; i++) {
+              row[1999] = row[1999] (row[1999] ? delim : "") $i
             }
-            for (i=1; i<=2000; i++) {
-              printf row[i] (i==2000 ? "\n" : ",")
+            for (i=1; i<=1999; i++) {
+              printf row[i] (i==1999 ? "\n" : ",")
             }
           }
         }' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
       fi
     done
+
 
     # display for log
     echo " "
