@@ -90,31 +90,32 @@ task profiling {
         echo "Processing $file with $column_count columns"
         awk -F, -v OFS=, '{
           if (NR == 1) {
-            for (i=1; i<=1999; i++) {
+            for (i=1; i<=1998; i++) {
               header[i] = $i
             }
-            header[2000] = ""
-            for (i=2000; i<=NF; i++) {
-              header[2000] = header[2000] (header[2000] ? "|" : "") $i
+            header[1999] = ""
+            for (i=1999; i<=NF; i++) {
+              header[1999] = header[1999] (header[1999] ? "|Cells_" : "") $i
             }
-            for (i=1; i<=2000; i++) {
-              printf header[i] (i==2000 ? "\n" : ",")
+            for (i=1; i<=1999; i++) {
+              printf header[i] (i==1999 ? "\n" : ",")
             }
           } else {
-            for (i=1; i<=1999; i++) {
+            for (i=1; i<=1998; i++) {
               row[i] = $i
             }
-            row[2000] = ""
-            for (i=2000; i<=NF; i++) {
-              row[2000] = row[2000] (row[2000] ? "|" : "") $i
+            row[1999] = ""
+            for (i=1999; i<=NF; i++) {
+              row[1999] = row[1999] (row[1999] ? "|Cells_" : "") $i
             }
-            for (i=1; i<=2000; i++) {
-              printf row[i] (i==2000 ? "\n" : ",")
+            for (i=1; i<=1999; i++) {
+              printf row[i] (i==1999 ? "\n" : ",")
             }
           }
         }' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
       fi
     done
+
 
     # display for log
     echo " "
