@@ -48,33 +48,41 @@ task profiling {
     ls -lh .
     echo " "
 
-    echo "===================================="
-    echo "= Processing CSV files ="
-    echo "===================================="
+echo "===================================="
+echo "= Processing CSV files to limit columns to 2000 ="
+echo "===================================="
 
-    find /cromwell_root/data -name "*.csv" | while read filename; do
-      echo "Processing $filename"
-      num_columns=$(head -1 "$filename" | sed 's/[^,]//g' | wc -c)
-      if (( num_columns > 2000 )); then
-        awk -v OFS=',' '{
-          if (NR == 1) {
-            for (i=1; i<=2000; i++) {
-              printf("%s%s", $i, (i<2000 ? OFS : ""))
-            }
-            printf("%s\n", "AdditionalColumns")
-          } else {
-            for (i=1; i<=2000; i++) {
-              printf("%s%s", $i, (i<2000 ? OFS : ""))
-            }
-            additional_columns = ""
-            for (i=2001; i<=NF; i++) {
-              additional_columns = (additional_columns == "" ? $i : additional_columns "|" $i)
-            }
-            printf("%s\n", additional_columns)
-          }
-        }' "$filename" > "${filename}.tmp" && mv "${filename}.tmp" "$filename"
-      fi
-    done
+find /cromwell_root/data -type f -name "*.csv" | while read -r file; do
+  column_count=$(head -1 "$file" | sed 's/[^,]//g' | wc -c)
+  if [ "$column_count" -gt 1999 ]; then
+    echo "Processing $file with $column_count columns"
+    awk -F, -v OFS=, '{
+      if (NR == 1) {
+        for (i=1; i<=1999; i++) {
+          header[i] = $i
+        }
+        header[2000] = ""
+        for (i=2000; i<=NF; i++) {
+          header[2000] = header[2000] (header[2000] ? "|" : "") $i
+        }
+        for (i=1; i<=2000; i++) {
+          printf header[i] (i==2000 ? "\n" : ",")
+        }
+      } else {
+        for (i=1; i<=1999; i++) {
+          row[i] = $i
+        }
+        row[2000] = ""
+        for (i=2000; i<=NF; i++) {
+          row[2000] = row[2000] (row[2000] ? "|" : "") $i
+        }
+        for (i=1; i<=2000; i++) {
+          printf row[i] (i==2000 ? "\n" : ",")
+        }
+      }
+    }' "$file" > "${file}.tmp" && mv "${file}.tmp" "$file"
+  fi
+done
 
 
 
