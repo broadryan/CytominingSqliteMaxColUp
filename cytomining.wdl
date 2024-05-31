@@ -2,44 +2,22 @@ version 1.0
 
 import "utils/cellprofiler_distributed_utils.wdl" as util
 
-## Copyright Broad Institute, 2021
-##
-## LICENSING :
-## This script is released under the WDL source code license (BSD-3)
-## (see LICENSE in https://github.com/openwdl/wdl).
-
 task profiling {
-  # A file that pipelines typically implicitly assume they have access to.
-
   input {
-    # Input files
     String cellprofiler_analysis_directory_gsurl
     String plate_id
-
-    # Pycytominer aggregation step
     String aggregation_operation = "mean"
-
-    # Pycytominer annotation step
     File plate_map_file
     String? annotate_join_on = "['Metadata_well_position', 'Metadata_Well']"
-
-    # Pycytominer normalize step
     String? normalize_method = "mad_robustize"
     Float? mad_robustize_epsilon = 0.0
-
-    # Desired location of the outputs
     String output_directory_gsurl
-
-    # Hardware-related inputs
     Int? hardware_memory_GB = 30
     Int? hardware_preemptible_tries = 2
   }
 
-  # Ensure no trailing slashes
   String cellprofiler_analysis_directory = sub(cellprofiler_analysis_directory_gsurl, "/+$", "")
   String output_directory = sub(output_directory_gsurl, "/+$", "")
-
-  # Output filenames:
   String agg_filename = plate_id + "_aggregated_" + aggregation_operation + ".csv"
   String aug_filename = plate_id + "_annotated_" + aggregation_operation + ".csv"
   String norm_filename = plate_id + "_normalized_" + aggregation_operation + ".csv"
@@ -47,89 +25,71 @@ task profiling {
   command <<<
 
     set -e
-
-    # run monitoring script
     monitor_script.sh > monitoring.log &
 
-    # display for log
     echo "Localizing data from ~{cellprofiler_analysis_directory}"
     start=`date +%s`
     echo $start
 
-    # localize the data
     mkdir -p /cromwell_root/data
     gsutil -mq rsync -r -x ".*\.png$" ~{cellprofiler_analysis_directory} /cromwell_root/data
     wget -O ingest_config.ini https://raw.githubusercontent.com/broadinstitute/cytominer_scripts/master/ingest_config.ini
     wget -O indices.sql https://raw.githubusercontent.com/broadinstitute/cytominer_scripts/master/indices.sql
 
-    # display for log
     end=`date +%s`
     echo $end
     runtime=$((end-start))
-    echo "Total runtime for file localization:"
-    echo $runtime
+    echo "Total runtime for file localization: $runtime"
 
-    # display for log
-    echo " "
     echo "ls -lh /cromwell_root/data"
     ls -lh /cromwell_root/data
-
-    # display for log
-    echo " "
     echo "ls -lh ."
     ls -lh .
 
-    # display for log
-    echo " "
     echo "===================================="
-    echo "= Running cytominer-database ingest ="
+    echo "= Running cytominer-databse ingest ="
     echo "===================================="
     start=`date +%s`
     echo $start
 
-    # run the very long SQLite database ingestion code
-    echo "cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini"
-    
-    # Count columns
-    column_count=$(head -n 1 /cromwell_root/data/*.csv | sed 's/[^,]//g' | wc -c)
-    
-    if [[ $column_count -le 2000 ]]; then
-      cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini
-      sqlite3 ~{plate_id}.sqlite < indices.sql
+    echo "Splitting data into chunks to avoid SQLite column limit"
+    mkdir -p /cromwell_root/data_chunks
+    python <<CODE
+import os
+import pandas as pd
+import glob
 
-      # Copying sqlite
-      echo "Copying sqlite file to ~{output_directory}"
-      gsutil cp ~{plate_id}.sqlite ~{output_directory}/
-    else
-      # Split data into two sets of columns
-      head -n 1 /cromwell_root/data/*.csv > header.csv
-      cut -d, -f1-2000 /cromwell_root/data/*.csv > data_part1.csv
-      cut -d, -f2001- /cromwell_root/data/*.csv > data_part2.csv
-      
-      cat header.csv data_part1.csv > /cromwell_root/data/data_part1_full.csv
-      cat header.csv data_part2.csv > /cromwell_root/data/data_part2_full.csv
-      
-      cytominer-database ingest /cromwell_root/data/data_part1_full.csv sqlite:///~{plate_id}_part1.sqlite -c ingest_config.ini
-      cytominer-database ingest /cromwell_root/data/data_part2_full.csv sqlite:///~{plate_id}_part2.sqlite -c ingest_config.ini
-      sqlite3 ~{plate_id}_part1.sqlite < indices.sql
-      sqlite3 ~{plate_id}_part2.sqlite < indices.sql
+# Define the directory containing the data files
+data_dir = "/cromwell_root/data"
 
-      # Copying sqlite files
-      echo "Copying sqlite files to ~{output_directory}"
-      gsutil cp ~{plate_id}_part1.sqlite ~{output_directory}/
-      gsutil cp ~{plate_id}_part2.sqlite ~{output_directory}/
-    fi
+# Get a list of all files in the data directory
+all_files = glob.glob(os.path.join(data_dir, "*.csv"))
 
-    # display for log
+# Define the number of columns per chunk
+chunk_size = 1000
+
+# Loop through each file and split into chunks
+for file in all_files:
+    df = pd.read_csv(file)
+    num_chunks = (df.shape[1] // chunk_size) + 1
+    for i in range(num_chunks):
+        chunk = df.iloc[:, i*chunk_size:(i+1)*chunk_size]
+        chunk.to_csv(f"/cromwell_root/data_chunks/{os.path.basename(file)}_chunk_{i}.csv", index=False)
+CODE
+
+    echo "Ingesting chunks into SQLite"
+    cytominer-database ingest /cromwell_root/data_chunks sqlite:///~{plate_id}.sqlite -c ingest_config.ini
+    sqlite3 ~{plate_id}.sqlite < indices.sql
+
+    echo "Copying sqlite file to ~{output_directory}"
+    gsutil cp ~{plate_id}.sqlite ~{output_directory}/
+
     end=`date +%s`
     echo $end
     runtime=$((end-start))
-    echo "Total runtime for cytominer-database ingest:"
-    echo $runtime
+    echo "Total runtime for cytominer-database ingest: $runtime"
     echo "===================================="
 
-    # run the python code right here for pycytominer aggregation
-    echo " "
     echo "Running pycytominer aggregation step"
     python <<CODE
 
@@ -141,7 +101,7 @@ task profiling {
 
     print("Creating Single Cell class... ")
     start = time.time()
-    sc = SingleCells('sqlite:///~{plate_id}.sqlite',aggregation_operation='~{aggregation_operation}')
+    sc = SingleCells('sqlite:///~{plate_id}.sqlite', aggregation_operation='~{aggregation_operation}')
     print("Time: " + str(time.time() - start))
 
     print("Aggregating profiles... ")
@@ -153,19 +113,17 @@ task profiling {
     print("Annotating with metadata... ")
     start = time.time()
     plate_map_df = pd.read_csv('~{plate_map_file}', sep="\t")
-    annotated_df = annotate(aggregated_df, plate_map_df, join_on = ~{annotate_join_on})
-    annotated_df.to_csv('~{aug_filename}',index=False)
+    annotated_df = annotate(aggregated_df, plate_map_df, join_on=~{annotate_join_on})
+    annotated_df.to_csv('~{aug_filename}', index=False)
     print("Time: " + str(time.time() - start))
 
     print("Normalizing to plate.. ")
     start = time.time()
-    normalize(annotated_df, method='~{normalize_method}', mad_robustize_epsilon = ~{mad_robustize_epsilon}).to_csv('~{norm_filename}',index=False)
+    normalize(annotated_df, method='~{normalize_method}', mad_robustize_epsilon=~{mad_robustize_epsilon}).to_csv('~{norm_filename}', index=False)
     print("Time: " + str(time.time() - start))
 
     CODE
 
-    # display for log
-    echo " "
     echo "Completed pycytominer aggregation annotation & normalization"
     echo "ls -lh ."
     ls -lh .
@@ -175,9 +133,7 @@ task profiling {
     gsutil cp ~{aug_filename} ~{output_directory}/
     gsutil cp ~{norm_filename} ~{output_directory}/
     gsutil cp monitoring.log ~{output_directory}/
-
     echo "Done."
-
   >>>
 
   output {
@@ -194,32 +150,23 @@ task profiling {
     maxRetries: 2
     preemptible: hardware_preemptible_tries
   }
-
 }
-
 
 workflow cytomining {
   input {
     String cellprofiler_analysis_directory_gsurl
     String plate_id
-
-    # Pycytominer annotation step
     File plate_map_file
-
-    # Desired location of the outputs
     String output_directory_gsurl
   }
 
-  # check write permission on output bucket
   call util.gcloud_is_bucket_writable as permission_check {
     input:
       gsurls=[output_directory_gsurl],
   }
 
-  # run the compute only if output bucket is writable
   Boolean is_bucket_writable = permission_check.is_bucket_writable
   if (is_bucket_writable) {
-
     call profiling {
       input:
         cellprofiler_analysis_directory_gsurl = cellprofiler_analysis_directory_gsurl,
@@ -227,12 +174,10 @@ workflow cytomining {
         plate_map_file = plate_map_file,
         output_directory_gsurl = output_directory_gsurl,
     }
-
   }
 
   output {
     File monitoring_log = select_first([profiling.monitoring_log, permission_check.log])
     File log = select_first([profiling.log, permission_check.log])
   }
-
 }
