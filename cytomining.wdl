@@ -149,6 +149,9 @@ task profiling {
 
 
     cd $initial_dir
+    echo "pip show cytominer-database======"
+
+    pip show cytominer-database
     echo "===========END DOCKER SQLITE MODIFICATION END=============="
     #Edit ends here-----------------------------------
 
