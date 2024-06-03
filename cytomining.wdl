@@ -144,7 +144,6 @@ task profiling {
     echo "whereis sqlite3======"
     whereis sqlite3
 
-    pip install --force-reinstall cytominer-database
 
 
 
