@@ -150,8 +150,12 @@ task profiling {
 
     cd $initial_dir
     echo "pip show cytominer-database======"
-
     pip show cytominer-database
+
+    echo "export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH"
+    echo "Thy kingdom come, thy will be done"
+    export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+    LD_PRELOAD=/usr/local/lib/libsqlite3.so cytominer-database ingest /cromwell_root/data sqlite:///~{plate_id}.sqlite -c ingest_config.ini
     echo "===========END DOCKER SQLITE MODIFICATION END=============="
     #Edit ends here-----------------------------------
 
